@@ -1,4 +1,4 @@
-# Cachestore
+# CacheCore
 
 An educational in-memory key-value server written in C.
 
