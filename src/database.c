@@ -34,3 +34,27 @@ void db_destroy(struct database *db) {
     hashmap_destroy(db->map);
     free(db);
 }
+
+bool db_set(struct database *db, const char *key, const char *value) {
+    if (db == NULL) {
+        return false;
+    }
+
+    return hashmap_put(db->map, key, value);
+}
+
+const char *db_get(struct database *db, const char *key) {
+    if (db == NULL) {
+        return NULL;
+    }
+
+    return hashmap_get(db->map, key);
+}
+
+bool db_del(struct database *db, const char *key) {
+    if (db == NULL) {
+        return false;
+    }
+
+    return hashmap_remove(db->map, key);
+}
