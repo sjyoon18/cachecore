@@ -1,4 +1,5 @@
 #include "server.h"
+#include "command.h"
 
 #include <arpa/inet.h>
 #include <stdio.h>
@@ -60,17 +61,43 @@ int server_run(int port) {
 
     printf("Received: %s", buffer);
 
+    struct command *command = parse_command(buffer);
+
+    if (command == NULL) {
+        close(client_fd);
+        close(server_fd);
+        return -1;
+    }
+
     const char *response;
 
-    if (strcmp(buffer, "PING\n") == 0) {
-        response = "PONG\n";
-    } else {
-        response = "ERROR\n";
+    switch (command->type) {
+        case COMMAND_PING:
+            response = "PONG\n";
+            break;
+        case COMMAND_SET:
+            response = "SET command received\n";
+            break;
+        case COMMAND_GET:
+            response = "GET command received\n";
+            break;
+        case COMMAND_DEL:
+            response = "DEL command received\n";
+            break;
+        case COMMAND_QUIT:
+            response = "QUIT command received\n";
+            break;
+        case COMMAND_INVALID:
+        default:
+            response = "ERROR\n";
+            break;
     }
 
     if (write(client_fd, response, strlen(response)) == -1) {
         perror("write");
     }
+
+    command_destroy(command);
 
     close(client_fd);
     close(server_fd);
