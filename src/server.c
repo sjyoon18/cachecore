@@ -8,8 +8,15 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <stdbool.h>
+#include <pthread.h>
+#include <stdlib.h>
 
 #define BUFFER_SIZE 1024
+
+struct client_context {
+    int client_fd;
+    struct database *db;
+};
 
 static void handle_client(int client_fd, struct database *db) {
     char read_buffer[BUFFER_SIZE];
@@ -27,7 +34,7 @@ static void handle_client(int client_fd, struct database *db) {
         }
 
         if (bytes_read == 0) {
-            printf("Client disconnected.\n");
+            printf("Client disconnected\n");
             break;
         }
 
@@ -69,77 +76,93 @@ static void handle_client(int client_fd, struct database *db) {
 
             struct command *command = parse_command(command_buffer);
 
-        if (command == NULL) {
-            should_quit = true;
-            break;
-        }
-
-        char response[BUFFER_SIZE];
-
-        switch (command->type) {
-            case COMMAND_PING:
-                snprintf(response, sizeof(response), "PONG\n");
-                break;
-
-            case COMMAND_SET:
-                snprintf(
-                    response,
-                    sizeof(response),
-                    db_set(db, command->key, command->value) ? "OK\n" : "ERROR\n"
-                );
-                break;
-
-            case COMMAND_GET: {
-                const char *value = db_get(db, command->key);
-
-                if (value == NULL) {
-                    snprintf(response, sizeof(response), "NOT_FOUND\n");
-                } else {
-                    snprintf(response, sizeof(response), "%s\n", value);
-                }
+            if (command == NULL) {
+                should_quit = true;
                 break;
             }
 
-            case COMMAND_DEL:
-                snprintf(
-                    response,
-                    sizeof(response),
-                    db_del(db, command->key) ? "OK\n" : "NOT_FOUND\n"
-                );
+            char response[BUFFER_SIZE];
+
+            switch (command->type) {
+                case COMMAND_PING:
+                    snprintf(response, sizeof(response), "PONG\n");
+                    break;
+
+                case COMMAND_SET:
+                    snprintf(
+                        response,
+                        sizeof(response),
+                        db_set(db, command->key, command->value) ? "OK\n" : "ERROR\n"
+                    );
+                    break;
+
+                case COMMAND_GET: {
+                    char *value = db_get(db, command->key);
+
+                    if (value == NULL) {
+                        snprintf(response, sizeof(response), "NOT_FOUND\n");
+                    } else {
+                        snprintf(response, sizeof(response), "%s\n", value);
+                        free(value);
+                    }
+                    break;
+                }
+
+                case COMMAND_DEL:
+                    snprintf(
+                        response,
+                        sizeof(response),
+                        db_del(db, command->key) ? "OK\n" : "NOT_FOUND\n"
+                    );
+                    break;
+
+                case COMMAND_QUIT:
+                    snprintf(response, sizeof(response), "BYE\n");
+                    should_quit = true;
+                    break;
+
+                case COMMAND_INVALID:
+                default:
+                    snprintf(response, sizeof(response), "ERROR\n");
+                    break;
+            }
+
+            if (write(client_fd, response, strlen(response)) == -1) {
+                perror("write");
+            }
+
+            command_destroy(command);
+
+            if (should_quit) {
+                printf("Client disconnected\n");
                 break;
+            }
 
-            case COMMAND_QUIT:
-                snprintf(response, sizeof(response), "BYE\n");
-                should_quit = true;
-                break;
+            size_t remaining = input_length - command_length;
 
-            case COMMAND_INVALID:
-            default:
-                snprintf(response, sizeof(response), "ERROR\n");
-                break;
-        }
+            memmove(
+                input_buffer,
+                input_buffer + command_length,
+                remaining
+            );
 
-        if (write(client_fd, response, strlen(response)) == -1) {
-            perror("write");
-        }
-
-        command_destroy(command);
-
-        if (should_quit) {
-            break;
-        }
-
-        size_t remaining = input_length - command_length;
-
-        memmove(
-            input_buffer,
-            input_buffer + command_length,
-            remaining
-        );
-
-        input_length = remaining;
+            input_length = remaining;
         }
     }
+}
+
+static void *client_thread(void *arg) {
+    struct client_context *context = arg;
+
+    int client_fd = context->client_fd;
+    struct database *db = context->db;
+
+    free(context);
+
+    handle_client(client_fd, db);
+    close(client_fd);
+    
+    return NULL;
 }
 
 int server_run(int port) {
@@ -188,11 +211,25 @@ int server_run(int port) {
 
         printf("Client connected\n");
     
-        handle_client(client_fd, db);
+        struct client_context *context = malloc(sizeof(*context));
 
-        close(client_fd);
+        if (context == NULL) {
+            close(client_fd);
+            continue;
+        }
 
-        printf("Client disconnected\n");
+        context->client_fd = client_fd;
+        context->db = db;
+
+        pthread_t thread;
+
+        if (pthread_create(&thread, NULL, client_thread, context) != 0) {
+            free(context);
+            close(client_fd);
+            continue;
+        }
+
+        pthread_detach(thread);
     }
 
     db_destroy(db);

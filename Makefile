@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -Wpedantic -std=c11 -Iinclude
+CFLAGS = -Wall -Wextra -Wpedantic -std=c11 -Iinclude -pthread
 TARGET = cachecore
 SOURCES = src/main.c src/server.c src/command.c src/database.c src/hashmap.c
 
