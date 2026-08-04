@@ -12,11 +12,14 @@
 #define BUFFER_SIZE 1024
 
 static void handle_client(int client_fd, struct database *db) {
-    char buffer[BUFFER_SIZE];
+    char read_buffer[BUFFER_SIZE];
+    char input_buffer[BUFFER_SIZE];
+
+    size_t input_length = 0;
     bool should_quit = false;
 
     while(!should_quit) {
-        ssize_t bytes_read = read(client_fd, buffer, sizeof(buffer) - 1);
+        ssize_t bytes_read = read(client_fd, read_buffer, sizeof(read_buffer));
 
         if (bytes_read == -1) {
             perror("read");
@@ -28,11 +31,46 @@ static void handle_client(int client_fd, struct database *db) {
             break;
         }
 
-        buffer[bytes_read] = '\0';
+        size_t received = (size_t)bytes_read;
 
-        struct command *command = parse_command(buffer);
+        if (input_length + received > sizeof(input_buffer)) {
+            printf("Input too large.\n");
+            break;
+        }
+
+        memcpy(
+            input_buffer + input_length,
+            read_buffer,
+            received
+        );
+
+        input_length += received;
+
+        char *newline;
+
+        while ((newline = memchr(input_buffer, '\n', input_length)) != NULL) {
+            size_t command_length = (size_t)(newline - input_buffer) + 1;
+
+            char command_buffer[BUFFER_SIZE];
+
+            if (command_length >= sizeof(command_buffer)) {
+                printf("Command too large.\n");
+                should_quit = true;
+                break;
+            }
+
+            memcpy(
+                command_buffer,
+                input_buffer,
+                command_length
+            );
+
+            command_buffer[command_length] = '\0';
+
+            struct command *command = parse_command(command_buffer);
 
         if (command == NULL) {
+            should_quit = true;
             break;
         }
 
@@ -86,6 +124,21 @@ static void handle_client(int client_fd, struct database *db) {
         }
 
         command_destroy(command);
+
+        if (should_quit) {
+            break;
+        }
+
+        size_t remaining = input_length - command_length;
+
+        memmove(
+            input_buffer,
+            input_buffer + command_length,
+            remaining
+        );
+
+        input_length = remaining;
+        }
     }
 }
 
@@ -138,7 +191,7 @@ int server_run(int port) {
         handle_client(client_fd, db);
 
         close(client_fd);
-        
+
         printf("Client disconnected\n");
     }
 
