@@ -11,53 +11,8 @@
 
 #define BUFFER_SIZE 1024
 
-int server_run(int port) {
-    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
-
-    if (server_fd == -1) {
-        perror("socket");
-        return -1;
-    }
-
-    struct sockaddr_in address;
-    memset(&address, 0, sizeof(address));
-
-    address.sin_family = AF_INET;
-    address.sin_port = htons(port);
-    address.sin_addr.s_addr = htonl(INADDR_ANY);
-
-    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) == -1) {
-        perror("bind");
-        close(server_fd);
-        return -1;
-    }
-
-    if (listen(server_fd, 10) == -1) {
-        perror("listen");
-        close(server_fd);
-        return -1;
-    }
-
-    struct database *db = db_create();
-
-    if (db == NULL) {
-        close(server_fd);
-        return -1;
-    }
-
-    printf("Listening on port %d...\n", port);
-
-    int client_fd = accept(server_fd, NULL, NULL);
-
-    if (client_fd == -1) {
-        perror("accept");
-        db_destroy(db);
-        close(server_fd);
-        return -1;
-    }
-
+static void handle_client(int client_fd, struct database *db) {
     char buffer[BUFFER_SIZE];
-
     bool should_quit = false;
 
     while(!should_quit) {
@@ -132,8 +87,61 @@ int server_run(int port) {
 
         command_destroy(command);
     }
+}
 
-    close(client_fd);
+int server_run(int port) {
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+
+    if (server_fd == -1) {
+        perror("socket");
+        return -1;
+    }
+
+    struct sockaddr_in address;
+    memset(&address, 0, sizeof(address));
+
+    address.sin_family = AF_INET;
+    address.sin_port = htons(port);
+    address.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) == -1) {
+        perror("bind");
+        close(server_fd);
+        return -1;
+    }
+
+    if (listen(server_fd, 10) == -1) {
+        perror("listen");
+        close(server_fd);
+        return -1;
+    }
+
+    struct database *db = db_create();
+
+    if (db == NULL) {
+        close(server_fd);
+        return -1;
+    }
+
+    printf("Listening on port %d...\n", port);
+
+    while (1) {
+        int client_fd = accept(server_fd, NULL, NULL);
+
+        if (client_fd == -1) {
+            perror("accept");
+            break;
+        }
+
+        printf("Client connected\n");
+    
+        handle_client(client_fd, db);
+
+        close(client_fd);
+        
+        printf("Client disconnected\n");
+    }
+
     db_destroy(db);
     close(server_fd);
 
