@@ -13,6 +13,7 @@
 
 #define BUFFER_SIZE 1024
 #define THREAD_COUNT 4
+#define QUEUE_CAPACITY 16
 
 struct client_context {
     int client_fd;
@@ -200,10 +201,9 @@ int server_run(int port) {
 
     struct thread_pool pool;
 
-    if (thread_pool_init(&pool, THREAD_COUNT) != 0) {
+    if (thread_pool_init(&pool, THREAD_COUNT, QUEUE_CAPACITY) != 0) {
         db_destroy(db);
         close(server_fd);
-
         return -1;
     }
 

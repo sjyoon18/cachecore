@@ -18,6 +18,7 @@ static void *worker_thread(void *arg) {
         }
 
         struct job *job = dequeue(&pool->queue);
+        pool->queue_size--;
         pthread_mutex_unlock(&pool->mutex);
         job->function(job->arg);
 
@@ -27,7 +28,11 @@ static void *worker_thread(void *arg) {
     return NULL;
 }
 
-int thread_pool_init(struct thread_pool *pool, int num_threads) {
+int thread_pool_init(
+    struct thread_pool *pool,
+    int num_threads,
+    size_t queue_capacity
+) {
     pool->num_threads = num_threads;
     pool->workers = malloc(sizeof(pthread_t) * num_threads);
 
@@ -37,12 +42,15 @@ int thread_pool_init(struct thread_pool *pool, int num_threads) {
 
     queue_init(&pool->queue);
 
+    pool->queue_size = 0;
+    pool->queue_capacity = queue_capacity;
+
     pthread_mutex_init(&pool->mutex, NULL);
     pthread_cond_init(&pool->condition, NULL);
 
     pool->shutdown = 0;
 
-    for (int i = 0; i < num_threads; i ++) {
+    for (int i = 0; i < num_threads; i++) {
         if (pthread_create(&pool->workers[i], NULL, worker_thread, pool) != 0) {
             return -1;
         }
@@ -74,7 +82,15 @@ int thread_pool_submit(
         return -1;
     }
 
+    if (pool->queue_size >= pool->queue_capacity) {
+        pthread_mutex_unlock(&pool->mutex);
+        free(job);
+        return -1;
+    }
+
     enqueue(&pool->queue, job);
+    pool->queue_size++;
+    
     pthread_cond_signal(&pool->condition);
     pthread_mutex_unlock(&pool->mutex);
 
