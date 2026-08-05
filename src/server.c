@@ -1,6 +1,7 @@
 #include "server.h"
 #include "command.h"
 #include "database.h"
+#include "thread_pool.h"
 
 #include <arpa/inet.h>
 #include <stdio.h>
@@ -8,10 +9,10 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <stdbool.h>
-#include <pthread.h>
 #include <stdlib.h>
 
 #define BUFFER_SIZE 1024
+#define THREAD_COUNT 4
 
 struct client_context {
     int client_fd;
@@ -151,7 +152,7 @@ static void handle_client(int client_fd, struct database *db) {
     }
 }
 
-static void *client_thread(void *arg) {
+static void client_task(void *arg) {
     struct client_context *context = arg;
 
     int client_fd = context->client_fd;
@@ -161,8 +162,6 @@ static void *client_thread(void *arg) {
 
     handle_client(client_fd, db);
     close(client_fd);
-    
-    return NULL;
 }
 
 int server_run(int port) {
@@ -199,6 +198,15 @@ int server_run(int port) {
         return -1;
     }
 
+    struct thread_pool pool;
+
+    if (thread_pool_init(&pool, THREAD_COUNT) != 0) {
+        db_destroy(db);
+        close(server_fd);
+
+        return -1;
+    }
+
     printf("Listening on port %d...\n", port);
 
     while (1) {
@@ -221,17 +229,15 @@ int server_run(int port) {
         context->client_fd = client_fd;
         context->db = db;
 
-        pthread_t thread;
-
-        if (pthread_create(&thread, NULL, client_thread, context) != 0) {
+        if (thread_pool_submit(&pool, client_task, context) != 0) {
             free(context);
             close(client_fd);
+
             continue;
         }
-
-        pthread_detach(thread);
     }
 
+    thread_pool_destroy(&pool);
     db_destroy(db);
     close(server_fd);
 
