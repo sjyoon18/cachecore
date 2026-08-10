@@ -64,11 +64,19 @@ static bool append_log(
         length = snprintf(buffer, sizeof(buffer), "%s %s\n", operation, key);
     }
 
-    if (length < 0 || (size_t)length > sizeof(buffer)) {
+    if (length < 0 || (size_t)length >= sizeof(buffer)) {
         return false;
     }
 
-    return write_all(db->log_fd, buffer, (size_t)length);
+    if (!write_all(db->log_fd, buffer, (size_t)length)) {
+        return false;
+    }
+
+    if (fsync(db->log_fd) == -1) {
+        return false;
+    }
+
+    return true;
 }
 
 static bool replay_log(struct database *db) {
@@ -116,6 +124,16 @@ static bool replay_log(struct database *db) {
     if (total_read != (size_t)file_size) {
         free(buffer);
         return false;
+    }
+
+    if (buffer[total_read - 1] != '\n') {
+        while(total_read > 0 && buffer[total_read - 1] != '\n') {
+            total_read--;
+        }
+        if (ftruncate(db->log_fd, (off_t)total_read) == -1) {
+            free(buffer);
+            return false;
+        }
     }
 
     buffer[total_read] = '\0';
@@ -215,22 +233,30 @@ void db_destroy(struct database *db) {
     free(db);
 }
 
-bool db_set(struct database *db, const char *key, const char *value) {
+enum db_result db_set(
+    struct database *db,
+    const char *key,
+    const char *value
+) {
     if (db == NULL || key == NULL || value == NULL) {
-        return false;
+        return DB_ERROR;
     }
 
     pthread_mutex_lock(&db->mutex);
 
     if (!append_log(db, "SET", key, value)) {
         pthread_mutex_unlock(&db->mutex);
-        return false;
+        return DB_FATAL;
     }
 
-    bool result = hashmap_put(db->map, key, value);
+    if (!hashmap_put(db->map, key, value)) {
+        pthread_mutex_unlock(&db->mutex);
+        return DB_FATAL;
+    }
+
     pthread_mutex_unlock(&db->mutex);
 
-    return result;
+    return DB_OK;
 }
 
 char *db_get(struct database *db, const char *key) {
@@ -258,20 +284,34 @@ char *db_get(struct database *db, const char *key) {
     return copy;
 }
 
-bool db_del(struct database *db, const char *key) {
-    if (db == NULL) {
-        return false;
+enum db_result db_del(
+    struct database *db,
+    const char *key
+) {
+    if (db == NULL || key == NULL) {
+        return DB_ERROR;
     }
 
     pthread_mutex_lock(&db->mutex);
 
-    if (!append_log(db, "DEL", key, NULL)) {
+    const char *value = hashmap_get(db->map, key);
+
+    if (value == NULL) {
         pthread_mutex_unlock(&db->mutex);
-        return false;
+        return DB_NOT_FOUND;
     }
 
-    bool result = hashmap_remove(db->map, key);
+    if (!append_log(db, "DEL", key, NULL)) {
+        pthread_mutex_unlock(&db->mutex);
+        return DB_FATAL;
+    }
+
+    if (!hashmap_remove(db->map, key)) {
+        pthread_mutex_unlock(&db->mutex);
+        return DB_FATAL;
+    }
+
     pthread_mutex_unlock(&db->mutex);
 
-    return result;
+    return DB_OK;
 }

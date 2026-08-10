@@ -90,13 +90,31 @@ static void handle_client(int client_fd, struct database *db) {
                     snprintf(response, sizeof(response), "PONG\n");
                     break;
 
-                case COMMAND_SET:
-                    snprintf(
-                        response,
-                        sizeof(response),
-                        db_set(db, command->key, command->value) ? "OK\n" : "ERROR\n"
-                    );
+                case COMMAND_SET: {
+                    enum db_result result = db_set(db, command->key, command->value);
+
+                    switch(result) {
+                        case DB_OK:
+                            snprintf(response, sizeof(response), "OK\n");
+                            break;
+
+                        case DB_ERROR:
+                            snprintf(response, sizeof(response), "ERROR\n");
+                            break;
+                        
+                        case DB_FATAL:
+                            fprintf(stderr, "Fatal database error during SET\n");
+                            command_destroy(command);
+                            exit(EXIT_FAILURE);
+
+                        case DB_NOT_FOUND:
+                        default:
+                            snprintf(response, sizeof(response), "ERROR\n");
+                            break;
+                    }
+
                     break;
+                }
 
                 case COMMAND_GET: {
                     char *value = db_get(db, command->key);
@@ -110,13 +128,34 @@ static void handle_client(int client_fd, struct database *db) {
                     break;
                 }
 
-                case COMMAND_DEL:
-                    snprintf(
-                        response,
-                        sizeof(response),
-                        db_del(db, command->key) ? "OK\n" : "NOT_FOUND\n"
-                    );
+                case COMMAND_DEL: {
+                    enum db_result result = db_del(db, command->key);
+                    
+                    switch(result) {
+                        case DB_OK:
+                            snprintf(response, sizeof(response), "OK\n");
+                            break;
+
+                        case DB_NOT_FOUND:
+                            snprintf(response, sizeof(response), "NOT_FOUND\n");
+                            break;
+
+                        case DB_ERROR:
+                            snprintf(response, sizeof(response), "ERROR\n");
+                            break;
+                        
+                        case DB_FATAL:
+                            fprintf(stderr, "Fatal database error during DEL\n");
+                            command_destroy(command);
+                            exit(EXIT_FAILURE);
+
+                        default:
+                            snprintf(response, sizeof(response), "ERROR\n");
+                            break;
+                    }
+
                     break;
+                }
 
                 case COMMAND_QUIT:
                     snprintf(response, sizeof(response), "BYE\n");
