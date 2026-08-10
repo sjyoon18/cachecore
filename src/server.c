@@ -20,6 +20,92 @@ struct client_context {
     struct database *db;
 };
 
+static bool execute_command(
+    struct database *db,
+    struct command *command,
+    char *response,
+    size_t response_size,
+    bool *should_quit
+) {
+    switch (command->type) {
+        case COMMAND_PING:
+            snprintf(response, response_size, "PONG\n");
+            return true;
+
+        case COMMAND_SET: {
+            enum db_result result = db_set(db, command->key, command->value);
+
+            switch(result) {
+                case DB_OK:
+                    snprintf(response, response_size, "OK\n");
+                    return true;
+
+                case DB_ERROR:
+                    snprintf(response, response_size, "ERROR\n");
+                    return true;
+                
+                case DB_FATAL:
+                    fprintf(stderr, "Fatal database error during SET\n");
+                    return false;
+
+                case DB_NOT_FOUND:
+                default:
+                    snprintf(response, response_size, "ERROR\n");
+                    return true;
+            }
+        }
+
+        case COMMAND_GET: {
+            char *value = db_get(db, command->key);
+
+            if (value == NULL) {
+                snprintf(response, response_size, "NOT_FOUND\n");
+            } else {
+                snprintf(response, response_size, "%s\n", value);
+                free(value);
+            }
+            
+            return true;
+        }
+
+        case COMMAND_DEL: {
+            enum db_result result = db_del(db, command->key);
+            
+            switch(result) {
+                case DB_OK:
+                    snprintf(response, response_size, "OK\n");
+                    return true;
+
+                case DB_NOT_FOUND:
+                    snprintf(response, response_size, "NOT_FOUND\n");
+                    return true;
+
+                case DB_ERROR:
+                    snprintf(response, response_size, "ERROR\n");
+                    return true;
+                
+                case DB_FATAL:
+                    fprintf(stderr, "Fatal database error during DEL\n");
+                    return false;
+
+                default:
+                    snprintf(response, response_size, "ERROR\n");
+                    return true;
+            }
+        }
+
+        case COMMAND_QUIT:
+            snprintf(response, response_size, "BYE\n");
+            *should_quit = true;
+            return true;
+
+        case COMMAND_INVALID:
+        default:
+            snprintf(response, response_size, "ERROR\n");
+            return true;
+    }
+}
+
 static void handle_client(int client_fd, struct database *db) {
     char read_buffer[BUFFER_SIZE];
     char input_buffer[BUFFER_SIZE];
@@ -85,87 +171,15 @@ static void handle_client(int client_fd, struct database *db) {
 
             char response[BUFFER_SIZE];
 
-            switch (command->type) {
-                case COMMAND_PING:
-                    snprintf(response, sizeof(response), "PONG\n");
-                    break;
-
-                case COMMAND_SET: {
-                    enum db_result result = db_set(db, command->key, command->value);
-
-                    switch(result) {
-                        case DB_OK:
-                            snprintf(response, sizeof(response), "OK\n");
-                            break;
-
-                        case DB_ERROR:
-                            snprintf(response, sizeof(response), "ERROR\n");
-                            break;
-                        
-                        case DB_FATAL:
-                            fprintf(stderr, "Fatal database error during SET\n");
-                            command_destroy(command);
-                            exit(EXIT_FAILURE);
-
-                        case DB_NOT_FOUND:
-                        default:
-                            snprintf(response, sizeof(response), "ERROR\n");
-                            break;
-                    }
-
-                    break;
-                }
-
-                case COMMAND_GET: {
-                    char *value = db_get(db, command->key);
-
-                    if (value == NULL) {
-                        snprintf(response, sizeof(response), "NOT_FOUND\n");
-                    } else {
-                        snprintf(response, sizeof(response), "%s\n", value);
-                        free(value);
-                    }
-                    break;
-                }
-
-                case COMMAND_DEL: {
-                    enum db_result result = db_del(db, command->key);
-                    
-                    switch(result) {
-                        case DB_OK:
-                            snprintf(response, sizeof(response), "OK\n");
-                            break;
-
-                        case DB_NOT_FOUND:
-                            snprintf(response, sizeof(response), "NOT_FOUND\n");
-                            break;
-
-                        case DB_ERROR:
-                            snprintf(response, sizeof(response), "ERROR\n");
-                            break;
-                        
-                        case DB_FATAL:
-                            fprintf(stderr, "Fatal database error during DEL\n");
-                            command_destroy(command);
-                            exit(EXIT_FAILURE);
-
-                        default:
-                            snprintf(response, sizeof(response), "ERROR\n");
-                            break;
-                    }
-
-                    break;
-                }
-
-                case COMMAND_QUIT:
-                    snprintf(response, sizeof(response), "BYE\n");
-                    should_quit = true;
-                    break;
-
-                case COMMAND_INVALID:
-                default:
-                    snprintf(response, sizeof(response), "ERROR\n");
-                    break;
+            if (!execute_command(
+                db,
+                command,
+                response,
+                sizeof(response),
+                &should_quit
+            )) {
+                command_destroy(command);
+                exit(EXIT_FAILURE);
             }
 
             if (write(client_fd, response, strlen(response)) == -1) {
