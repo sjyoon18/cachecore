@@ -24,6 +24,16 @@ bool aof_replay(
     struct hashmap *map
 );
 
+bool aof_maybe_compact(
+    struct aof *aof,
+    struct hashmap *map
+);
+
+bool aof_compact(
+    struct aof *aof,
+    struct hashmap *map
+);
+
 void aof_close(struct aof *aof);
 
 #endif

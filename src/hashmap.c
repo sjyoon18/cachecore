@@ -15,6 +15,13 @@ struct hashmap {
     struct entry **buckets;
 };
 
+size_t hashmap_size(const struct hashmap *map) {
+    if (map == NULL) {
+        return 0;
+    }
+    return map->entry_count;
+}
+
 static size_t hash_string(const char *key) {
     size_t hash = 0;
 
@@ -220,6 +227,25 @@ bool hashmap_remove(struct hashmap *map, const char *key) {
     }
 
     return false;
+}
+
+void hashmap_foreach(
+    struct hashmap *map,
+    hashmap_visit_fn visit,
+    void *context
+) {
+    if (map == NULL || visit == NULL) {
+        return;
+    }
+
+    for (size_t i = 0; i < map->bucket_count; i++) {
+        struct entry *current = map->buckets[i];
+
+        while (current != NULL) {
+            visit(current->key, current->value, context);
+            current = current->next;
+        }
+    }
 }
 
 void hashmap_destroy(struct hashmap *map) {

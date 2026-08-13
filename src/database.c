@@ -87,6 +87,11 @@ enum db_result db_set(
         return DB_FATAL;
     }
 
+    if (!aof_maybe_compact(db->aof, db->map)) {
+        pthread_mutex_unlock(&db->mutex);
+        return DB_FATAL;
+    }
+
     pthread_mutex_unlock(&db->mutex);
 
     return DB_OK;
@@ -140,6 +145,11 @@ enum db_result db_del(
     }
 
     if (!hashmap_remove(db->map, key)) {
+        pthread_mutex_unlock(&db->mutex);
+        return DB_FATAL;
+    }
+
+    if (!aof_maybe_compact(db->aof, db->map)) {
         pthread_mutex_unlock(&db->mutex);
         return DB_FATAL;
     }
