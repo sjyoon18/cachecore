@@ -12,7 +12,7 @@
 #define LOG_BUFFER_SIZE 1024
 #define LOG_FILE "cachecore.aof"
 #define TEMP_LOG_FILE "cachecore.aof.tmp"
-#define AOF_COMPACTION_THRESHOLD 100
+#define AOF_OBSOLETE_ENTRY_THRESHOLD 100
 
 struct aof {
     int fd;
@@ -87,6 +87,65 @@ static void compact_entry(
     }
 }
 
+static bool aof_compact(
+    struct aof *aof,
+    struct hashmap *map
+) {
+    if (aof == NULL || map == NULL) {
+        return false;
+    }
+
+    int temp_fd = open(
+        TEMP_LOG_FILE,
+        O_WRONLY | O_CREAT | O_TRUNC,
+        0644
+    );
+
+    if (temp_fd == -1) {
+        return false;
+    }
+
+    struct compact_context context = {
+        .fd = temp_fd,
+        .success = true
+    };
+
+    hashmap_foreach(map, compact_entry, &context);
+
+    if (!context.success) {
+        close(temp_fd);
+        return false;
+    }
+
+    if (fsync(temp_fd) == -1) {
+        close(temp_fd);
+        return false;
+    }
+
+    if (close(temp_fd) == -1) {
+        return false;
+    }
+
+    if (rename(TEMP_LOG_FILE, LOG_FILE) == -1) {
+        return false;
+    }
+
+    close(aof->fd);
+
+    aof->fd = open(
+        LOG_FILE,
+        O_RDWR | O_APPEND
+    );
+
+    if (aof->fd == -1) {
+        return false;
+    }
+
+    aof->log_entries = hashmap_size(map);
+
+    return true;
+}
+
 struct aof *aof_open(void) {
 
     struct aof *aof = malloc(sizeof(*aof));
@@ -94,8 +153,6 @@ struct aof *aof_open(void) {
     if (aof == NULL) {
         return NULL;
     }
-
-    aof->log_entries = 0;
     
     aof->fd = open(
         LOG_FILE,
@@ -187,6 +244,8 @@ bool aof_replay(struct aof *aof, struct hashmap *map) {
         return false;
     }
 
+    aof->log_entries = 0;
+
     char *buffer = NULL;
     struct command *command = NULL;
     bool success = false;
@@ -240,8 +299,7 @@ bool aof_replay(struct aof *aof, struct hashmap *map) {
             total_read--;
         }
         if (ftruncate(aof->fd, (off_t)total_read) == -1) {
-            free(buffer);
-            return false;
+            goto cleanup;
         }
     }
 
@@ -297,68 +355,17 @@ bool aof_maybe_compact(
         return false;
     }
 
-    if (aof->log_entries < AOF_COMPACTION_THRESHOLD) {
-        return true;
-    }
+    size_t live_entries = hashmap_size(map);
 
-    return aof_compact(aof, map);
-}
-
-bool aof_compact(
-    struct aof *aof,
-    struct hashmap *map
-) {
-    if (aof == NULL || map == NULL) {
+    if (aof->log_entries < live_entries) {
         return false;
     }
 
-    int temp_fd = open(
-        TEMP_LOG_FILE,
-        O_WRONLY | O_CREAT | O_TRUNC,
-        0644
-    );
+    size_t obsolete_entries = aof->log_entries - live_entries;
 
-    if (temp_fd == -1) {
-        return false;
+    if (obsolete_entries >= AOF_OBSOLETE_ENTRY_THRESHOLD) {
+        return aof_compact(aof, map);
     }
-
-    struct compact_context context = {
-        .fd = temp_fd,
-        .success = true
-    };
-
-    hashmap_foreach(map, compact_entry, &context);
-
-    if (!context.success) {
-        close(temp_fd);
-        return false;
-    }
-
-    if (fsync(temp_fd) == -1) {
-        close(temp_fd);
-        return false;
-    }
-
-    if (close(temp_fd) == -1) {
-        return false;
-    }
-
-    if (rename(TEMP_LOG_FILE, LOG_FILE) == -1) {
-        return false;
-    }
-
-    close(aof->fd);
-
-    aof->fd = open(
-        LOG_FILE,
-        O_RDWR | O_APPEND
-    );
-
-    if (aof->fd == -1) {
-        return false;
-    }
-
-    aof->log_entries = hashmap_size(map);
 
     return true;
 }
