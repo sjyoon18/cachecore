@@ -2,6 +2,7 @@
 #include "command.h"
 #include "database.h"
 #include "thread_pool.h"
+#include "client_manager.h"
 
 #include <arpa/inet.h>
 #include <stdio.h>
@@ -10,14 +11,24 @@
 #include <unistd.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <signal.h>
+#include <errno.h>
 
 #define BUFFER_SIZE 1024
 #define THREAD_COUNT 4
 #define QUEUE_CAPACITY 16
 
+static volatile sig_atomic_t shutdown_requested = 0;
+
+static void handle_sigint(int signo) {
+    (void)signo;
+    shutdown_requested = 1;
+}
+
 struct client_context {
     int client_fd;
     struct database *db;
+    struct client_manager *manager;
 };
 
 static bool execute_command(
@@ -211,10 +222,13 @@ static void client_task(void *arg) {
 
     int client_fd = context->client_fd;
     struct database *db = context->db;
+    struct client_manager *manager = context->manager;
 
     free(context);
 
     handle_client(client_fd, db);
+
+    client_manager_remove(manager,client_fd);
     close(client_fd);
 }
 
@@ -260,14 +274,48 @@ int server_run(int port) {
         return -1;
     }
 
+    struct client_manager manager;
+
+    if (client_manager_init(&manager) != 0) {
+        thread_pool_destroy(&pool);
+        db_destroy(db);
+        close(server_fd);
+        return -1;
+    }
+
+    struct sigaction action;
+    memset(&action, 0, sizeof(action));
+
+    action.sa_handler = handle_sigint;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = 0;
+
+    if (sigaction(SIGINT, &action, NULL) == -1) {
+        perror("sigaction");
+        client_manager_destroy(&manager);
+        thread_pool_destroy(&pool);
+        db_destroy(db);
+        close(server_fd);
+        return -1;
+    }
+
     printf("Listening on port %d...\n", port);
 
-    while (1) {
+    while (!shutdown_requested) {
         int client_fd = accept(server_fd, NULL, NULL);
 
         if (client_fd == -1) {
+            if (errno == EINTR && shutdown_requested) {
+                break;
+            }
+
             perror("accept");
             break;
+        }
+
+        if (client_manager_add(&manager, client_fd) != 0) {
+            close(client_fd);
+            continue;
         }
 
         printf("Client connected\n");
@@ -275,22 +323,26 @@ int server_run(int port) {
         struct client_context *context = malloc(sizeof(*context));
 
         if (context == NULL) {
+            client_manager_remove(&manager, client_fd);
             close(client_fd);
             continue;
         }
 
         context->client_fd = client_fd;
         context->db = db;
+        context->manager = &manager;
 
         if (thread_pool_submit(&pool, client_task, context) != 0) {
             free(context);
+            client_manager_remove(&manager, client_fd);
             close(client_fd);
-
             continue;
         }
     }
 
+    client_manager_shutdown_all(&manager);
     thread_pool_destroy(&pool);
+    client_manager_destroy(&manager);
     db_destroy(db);
     close(server_fd);
 

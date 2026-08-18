@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -Wpedantic -std=c11 -Iinclude -pthread
 TARGET = cachecore
-SOURCES = src/main.c src/server.c src/command.c src/database.c src/hashmap.c src/queue.c src/thread_pool.c src/aof.c
+SOURCES = src/main.c src/server.c src/command.c src/database.c src/hashmap.c src/queue.c src/thread_pool.c src/aof.c src/client_manager.c
 
 $(TARGET): $(SOURCES)
 	$(CC) $(CFLAGS) $(SOURCES) -o $(TARGET)
