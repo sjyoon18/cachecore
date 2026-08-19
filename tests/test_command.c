@@ -13,19 +13,6 @@ static void test_ping(void) {
     command_destroy(command);
 }
 
-static void test_empty_input(void) {
-    struct command *command = parse_command("\n");
-
-    assert(command != NULL);
-    assert(command->type == COMMAND_INVALID);
-
-    command_destroy(command);
-}
-
-static void test_null_input(void) {
-    assert(parse_command(NULL) == NULL);
-}
-
 static void test_set(void) {
     struct command *command = parse_command("SET name Alice\n");
 

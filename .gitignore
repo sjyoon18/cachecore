@@ -2,4 +2,5 @@
 /cachecore.aof
 /test_hashmap
 /test_command
+/test_database
 /test
