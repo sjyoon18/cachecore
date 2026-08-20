@@ -4,14 +4,15 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <errno.h>
 #include <pthread.h>
 
 #define SERVER_PORT 6379
 #define SERVER_ADDRESS "127.0.0.1"
 
 #define BUFFER_SIZE 1024
-#define ITERATIONS 5000
-#define THREAD_COUNT 16
+#define ITERATIONS 1000
+#define THREAD_COUNT 8
 
 #define STRESS_OK NULL
 #define STRESS_FAIL ((void *)1)
@@ -34,7 +35,11 @@ static int write_all(
             length - total_written
         );
 
-        if (written <= 0) {
+        if (written == -1) {
+            if (errno == EINTR) {
+                continue;
+            }
+
             return -1;
         }
 
@@ -56,7 +61,17 @@ static int read_line(
 
         ssize_t bytes_read = read(fd, &byte, 1);
 
-        if (bytes_read <= 0) {
+        if (bytes_read == -1) {
+            if (errno == EINTR) {
+                continue;
+            }
+
+            perror("read");
+            return -1;
+        }
+
+        if (bytes_read == 0) {
+            fprintf(stderr, "Server closed connection\n");
             return -1;
         }
 

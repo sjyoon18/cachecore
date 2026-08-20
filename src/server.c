@@ -31,6 +31,38 @@ struct client_context {
     struct client_manager *manager;
 };
 
+static bool write_all(
+    int fd,
+    const char *buffer,
+    size_t length
+) {
+    size_t total_written = 0;
+
+    while (total_written < length) {
+        ssize_t written = write(
+            fd,
+            buffer + total_written,
+            length - total_written
+        );
+
+        if (written == -1) {
+            if (errno == EINTR) {
+                continue;
+            }
+
+            return false;
+        }
+
+        if (written == 0) {
+            return false;
+        }
+
+        total_written += (size_t)written;
+    }
+
+    return true;
+}
+
 static bool execute_command(
     struct database *db,
     struct command *command,
@@ -193,8 +225,13 @@ static void handle_client(int client_fd, struct database *db) {
                 exit(EXIT_FAILURE);
             }
 
-            if (write(client_fd, response, strlen(response)) == -1) {
+            if (!write_all(
+                client_fd,
+                response,
+                strlen(response)
+            )) {
                 perror("write");
+                break;
             }
 
             command_destroy(command);

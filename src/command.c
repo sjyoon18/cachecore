@@ -27,7 +27,9 @@ struct command *parse_command(const char *input) {
 
     strcpy(copy, input);
 
-    char *token = strtok(copy, " \n");
+    char *saveptr = NULL;
+
+    char *token = strtok_r(copy, " \n", &saveptr);
 
     if (token == NULL) {
         free(copy);
@@ -35,14 +37,14 @@ struct command *parse_command(const char *input) {
     }
 
     if (strcmp(token, "PING") == 0) {
-        char *extra = strtok(NULL, " \n");
+        char *extra = strtok_r(NULL, " \n", &saveptr);
         if (extra == NULL) {
             command->type = COMMAND_PING;
         }
     } else if (strcmp(token, "SET") == 0) {
-        char *key = strtok(NULL, " \n");
-        char *value = strtok(NULL, " \n");
-        char *extra = strtok(NULL, " \n");
+        char *key = strtok_r(NULL, " \n", &saveptr);
+        char *value = strtok_r(NULL, " \n", &saveptr);
+        char *extra = strtok_r(NULL, " \n", &saveptr);
 
         if (key != NULL && value != NULL && extra == NULL) {
             command->key = malloc(strlen(key) + 1);
@@ -66,8 +68,8 @@ struct command *parse_command(const char *input) {
             command->type = COMMAND_SET;
         }
     } else if (strcmp(token, "GET") == 0) {
-        char *key = strtok(NULL, " \n");
-        char *extra = strtok(NULL, " \n");
+        char *key = strtok_r(NULL, " \n", &saveptr);
+        char *extra = strtok_r(NULL, " \n", &saveptr);
 
         if (key != NULL && extra == NULL) {
             command->key = malloc(strlen(key) + 1);
@@ -81,8 +83,8 @@ struct command *parse_command(const char *input) {
             command->type = COMMAND_GET;
         }
     } else if (strcmp(token, "DEL") == 0) {
-        char *key = strtok(NULL, " \n");
-        char *extra = strtok(NULL, " \n");
+        char *key = strtok_r(NULL, " \n", &saveptr);
+        char *extra = strtok_r(NULL, " \n", &saveptr);
 
         if (key != NULL && extra == NULL) {
             command->key = malloc(strlen(key) + 1);
@@ -96,7 +98,7 @@ struct command *parse_command(const char *input) {
             command->type = COMMAND_DEL;
         }
     } else if (strcmp(token, "QUIT") == 0) {
-        char *extra = strtok(NULL, " \n");
+        char *extra = strtok_r(NULL, " \n", &saveptr);
 
         if (extra == NULL) {
             command->type = COMMAND_QUIT;
