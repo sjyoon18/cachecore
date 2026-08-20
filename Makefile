@@ -16,28 +16,40 @@ SOURCES = src/main.c \
 TEST_HASHMAP_BIN = test_hashmap
 TEST_COMMAND_BIN = test_command
 TEST_DATABASE_BIN = test_database
+STRESS_CLIENT_BIN = stress_client
 
 $(TARGET): $(SOURCES)
 	$(CC) $(CFLAGS) $(SOURCES) -o $(TARGET)
 
-$(TEST_HASHMAP_BIN): tests/test_hashmap.c src/hashmap.c
-	$(CC) $(CFLAGS) tests/test_hashmap.c src/hashmap.c -o $(TEST_HASHMAP_BIN)
+$(TEST_HASHMAP_BIN): tests/unit/test_hashmap.c src/hashmap.c
+	$(CC) $(CFLAGS) \
+	tests/unit/test_hashmap.c \
+	src/hashmap.c \
+	-o $(TEST_HASHMAP_BIN)
 
-$(TEST_COMMAND_BIN): tests/test_command.c src/command.c
-	$(CC) $(CFLAGS) tests/test_command.c src/command.c -o $(TEST_COMMAND_BIN)
+$(TEST_COMMAND_BIN): tests/unit/test_command.c src/command.c
+	$(CC) $(CFLAGS) \
+	tests/unit/test_command.c \
+	src/command.c \
+	-o $(TEST_COMMAND_BIN)
 
-$(TEST_DATABASE_BIN): tests/test_database.c \
+$(TEST_DATABASE_BIN): tests/integration/test_database.c \
                      src/database.c \
                      src/hashmap.c \
                      src/aof.c \
                      src/command.c
 	$(CC) $(CFLAGS) \
-	tests/test_database.c \
+	tests/integration/test_database.c \
 	src/database.c \
 	src/hashmap.c \
 	src/aof.c \
 	src/command.c \
 	-o $(TEST_DATABASE_BIN)
+
+$(STRESS_CLIENT_BIN): tests/stress/stress_client.c
+	$(CC) $(CFLAGS) \
+	tests/stress/stress_client.c \
+	-o $(STRESS_CLIENT_BIN)
 
 run-test-hashmap: $(TEST_HASHMAP_BIN)
 	./$(TEST_HASHMAP_BIN)
@@ -48,6 +60,9 @@ run-test-command: $(TEST_COMMAND_BIN)
 run-test-database: $(TEST_DATABASE_BIN)
 	./$(TEST_DATABASE_BIN)
 
+stress-client: $(STRESS_CLIENT_BIN)
+	./$(STRESS_CLIENT_BIN)
+
 test: run-test-hashmap run-test-command run-test-database
 
 run: $(TARGET)
@@ -57,7 +72,8 @@ clean:
 	rm -f $(TARGET) \
 	      $(TEST_HASHMAP_BIN) \
 	      $(TEST_COMMAND_BIN) \
-	      $(TEST_DATABASE_BIN)
+	      $(TEST_DATABASE_BIN) \
+		  $(STRESS_CLIENT_BIN)
 
 .PHONY: run clean test \
         run-test-hashmap \

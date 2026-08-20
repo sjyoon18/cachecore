@@ -3,4 +3,5 @@
 /test_hashmap
 /test_command
 /test_database
+/stress_client
 /test
