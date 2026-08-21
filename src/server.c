@@ -17,6 +17,7 @@
 #define BUFFER_SIZE 1024
 #define THREAD_COUNT 4
 #define QUEUE_CAPACITY 16
+#define LISTEN_BACKLOG 64
 
 static volatile sig_atomic_t shutdown_requested = 0;
 
@@ -290,7 +291,7 @@ int server_run(int port) {
         return -1;
     }
 
-    if (listen(server_fd, 10) == -1) {
+    if (listen(server_fd, LISTEN_BACKLOG) == -1) {
         perror("listen");
         close(server_fd);
         return -1;
@@ -360,6 +361,7 @@ int server_run(int port) {
         struct client_context *context = malloc(sizeof(*context));
 
         if (context == NULL) {
+            fprintf(stderr, "Client rejected: malloc fail\n");
             client_manager_remove(&manager, client_fd);
             close(client_fd);
             continue;
@@ -370,6 +372,7 @@ int server_run(int port) {
         context->manager = &manager;
 
         if (thread_pool_submit(&pool, client_task, context) != 0) {
+            fprintf(stderr, "Client rejected: thread pool queue full\n");
             free(context);
             client_manager_remove(&manager, client_fd);
             close(client_fd);
