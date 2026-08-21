@@ -4,4 +4,5 @@
 /test_command
 /test_database
 /stress_client
+/benchmark_client
 /test

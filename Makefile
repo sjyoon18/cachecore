@@ -17,6 +17,7 @@ TEST_HASHMAP_BIN = test_hashmap
 TEST_COMMAND_BIN = test_command
 TEST_DATABASE_BIN = test_database
 STRESS_CLIENT_BIN = stress_client
+BENCHMARK_BIN = benchmark_client
 
 $(TARGET): $(SOURCES)
 	$(CC) $(CFLAGS) $(SOURCES) -o $(TARGET)
@@ -51,6 +52,11 @@ $(STRESS_CLIENT_BIN): tests/stress/stress_client.c
 	tests/stress/stress_client.c \
 	-o $(STRESS_CLIENT_BIN)
 
+$(BENCHMARK_BIN): bench/benchmark_client.c
+	$(CC) $(CFLAGS) \
+	bench/benchmark_client.c \
+	-o $(BENCHMARK_BIN)
+
 run-test-hashmap: $(TEST_HASHMAP_BIN)
 	./$(TEST_HASHMAP_BIN)
 
@@ -62,6 +68,9 @@ run-test-database: $(TEST_DATABASE_BIN)
 
 stress-client: $(STRESS_CLIENT_BIN)
 	./$(STRESS_CLIENT_BIN)
+
+benchmark: $(BENCHMARK_BIN)
+	./$(BENCHMARK_BIN)
 
 test: run-test-hashmap run-test-command run-test-database
 
