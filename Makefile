@@ -13,22 +13,24 @@ SOURCES = src/main.c \
           src/aof.c \
           src/client_manager.c
 
+HEADERS = $(wildcard include/*.h)
+
 TEST_HASHMAP_BIN = test_hashmap
 TEST_COMMAND_BIN = test_command
 TEST_DATABASE_BIN = test_database
 STRESS_CLIENT_BIN = stress_client
 BENCHMARK_BIN = benchmark_client
 
-$(TARGET): $(SOURCES)
+$(TARGET): $(SOURCES) $(HEADERS)
 	$(CC) $(CFLAGS) $(SOURCES) -o $(TARGET)
 
-$(TEST_HASHMAP_BIN): tests/unit/test_hashmap.c src/hashmap.c
+$(TEST_HASHMAP_BIN): tests/unit/test_hashmap.c src/hashmap.c include/hashmap.h
 	$(CC) $(CFLAGS) \
 	tests/unit/test_hashmap.c \
 	src/hashmap.c \
 	-o $(TEST_HASHMAP_BIN)
 
-$(TEST_COMMAND_BIN): tests/unit/test_command.c src/command.c
+$(TEST_COMMAND_BIN): tests/unit/test_command.c src/command.c include/command.h
 	$(CC) $(CFLAGS) \
 	tests/unit/test_command.c \
 	src/command.c \
@@ -38,7 +40,11 @@ $(TEST_DATABASE_BIN): tests/integration/test_database.c \
                      src/database.c \
                      src/hashmap.c \
                      src/aof.c \
-                     src/command.c
+                     src/command.c \
+                     include/database.h \
+                     include/hashmap.h \
+                     include/aof.h \
+                     include/command.h
 	$(CC) $(CFLAGS) \
 	tests/integration/test_database.c \
 	src/database.c \
@@ -82,9 +88,12 @@ clean:
 	      $(TEST_HASHMAP_BIN) \
 	      $(TEST_COMMAND_BIN) \
 	      $(TEST_DATABASE_BIN) \
-		  $(STRESS_CLIENT_BIN)
+		  $(STRESS_CLIENT_BIN) \
+		  $(BENCHMARK_BIN)
 
 .PHONY: run clean test \
         run-test-hashmap \
         run-test-command \
-        run-test-database
+        run-test-database \
+		stress-client \
+		benchmark
