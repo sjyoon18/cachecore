@@ -10,12 +10,28 @@
 #define SERVER_PORT 6379
 #define SERVER_ADDRESS "127.0.0.1"
 #define BUFFER_SIZE 1024
-#define CLIENT_COUNT 16
+#define CLIENT_COUNT 4
 #define REQUESTS_PER_CLIENT 10000
+
+struct benchmark_sync {
+    pthread_mutex_t mutex;
+
+    pthread_cond_t ready_condition;
+    pthread_cond_t start_condition;
+    pthread_cond_t done_condition;
+    pthread_cond_t cleanup_condition;
+
+    int ready_count;
+    int done_count;
+    int start;
+    int cleanup_allowed;
+    int abort;
+};
 
 struct benchmark_context {
     int client_id;
     int failed;
+    struct benchmark_sync *sync;
 };
 
 static int write_all(
@@ -79,6 +95,21 @@ static double elapsed_seconds(
     return seconds + nanoseconds;
 }
 
+static void benchmark_fail(struct benchmark_context *context) {
+    context->failed = 1;
+
+    pthread_mutex_lock(&context->sync->mutex);
+
+    context->sync->abort = 1;
+
+    pthread_cond_broadcast(&context->sync->ready_condition);
+    pthread_cond_broadcast(&context->sync->start_condition);
+    pthread_cond_broadcast(&context->sync->done_condition);
+    pthread_cond_broadcast(&context->sync->cleanup_condition);
+
+    pthread_mutex_unlock(&context->sync->mutex);
+}
+
 static void *benchmark_worker(void *arg) {
     struct benchmark_context *context = arg;
 
@@ -88,7 +119,7 @@ static void *benchmark_worker(void *arg) {
 
     if (fd == -1) {
         perror("socket");
-        context->failed = 1;
+        benchmark_fail(context);
         return NULL;
     }
 
@@ -104,8 +135,8 @@ static void *benchmark_worker(void *arg) {
         &address.sin_addr
     ) != 1) {
         fprintf(stderr, "inet_pton failed\n");
+        benchmark_fail(context);
         close(fd);
-        context->failed = 1;
         return NULL;
     }
 
@@ -117,8 +148,8 @@ static void *benchmark_worker(void *arg) {
         fprintf(stderr, "Client %d: connect failed: ", client_id);
         perror(NULL);
 
+        benchmark_fail(context);
         close(fd);
-        context->failed = 1;
         return NULL;
     }
 
@@ -136,15 +167,15 @@ static void *benchmark_worker(void *arg) {
 
     if (write_all(fd, command, strlen(command)) != 0) {
         fprintf(stderr, "Client %d: setup SET write failed\n", client_id);
+        benchmark_fail(context);
         close(fd);
-        context->failed = 1;
         return NULL;
     }
 
     if (read_line(fd, response, sizeof(response)) != 0) {
         fprintf(stderr, "Client %d: setup SET response failed\n", client_id);
+        benchmark_fail(context);
         close(fd);
-        context->failed = 1;
         return NULL;
     }
 
@@ -156,8 +187,9 @@ static void *benchmark_worker(void *arg) {
             response
         );
 
+        benchmark_fail(context);
         close(fd);
-        context->failed = 1;
+
         return NULL;
     }
 
@@ -175,6 +207,26 @@ static void *benchmark_worker(void *arg) {
         client_id
     );
 
+    pthread_mutex_lock(&context->sync->mutex);
+
+    context->sync->ready_count++;
+    pthread_cond_signal(&context->sync->ready_condition);
+
+    while (!context->sync->start && !context->sync->abort) {
+        pthread_cond_wait(
+            &context->sync->start_condition,
+            &context->sync->mutex
+        );
+    }
+
+    if (context->sync->abort) {
+        pthread_mutex_unlock(&context->sync->mutex);
+        close(fd);
+        return NULL;
+    }
+
+    pthread_mutex_unlock(&context->sync->mutex);
+
     for (int i = 0; i < REQUESTS_PER_CLIENT; i++) {
         if (write_all(fd, command, strlen(command)) != 0) {
             fprintf(
@@ -184,7 +236,8 @@ static void *benchmark_worker(void *arg) {
                 i
             );
 
-            context->failed = 1;
+            benchmark_fail(context);
+            close(fd);
             return NULL;
         }
 
@@ -196,7 +249,8 @@ static void *benchmark_worker(void *arg) {
                 i
             );
 
-            context->failed = 1;
+            benchmark_fail(context);
+            close(fd);
             return NULL;
         }
 
@@ -208,10 +262,31 @@ static void *benchmark_worker(void *arg) {
                 response
             );
 
-            context->failed = 1;
+            benchmark_fail(context);
+            close(fd);
             return NULL;
         }
     }
+
+    pthread_mutex_lock(&context->sync->mutex);
+
+    context->sync->done_count++;
+    pthread_cond_signal(&context->sync->done_condition);
+
+    while(!context->sync->cleanup_allowed && !context->sync->abort) {
+        pthread_cond_wait(
+            &context->sync->cleanup_condition,
+            &context->sync->mutex
+        );
+    }
+
+    if (context->sync->abort) {
+        pthread_mutex_unlock(&context->sync->mutex);
+        close(fd);
+        return NULL;
+    }
+
+    pthread_mutex_unlock(&context->sync->mutex);
 
     write_all(fd, "QUIT\n", 5);
     read_line(fd, response, sizeof(response));
@@ -222,17 +297,30 @@ static void *benchmark_worker(void *arg) {
 }
 
 int main(void) {
+    struct benchmark_sync sync;
+
+    pthread_mutex_init(&sync.mutex, NULL);
+    pthread_cond_init(&sync.ready_condition, NULL);
+    pthread_cond_init(&sync.start_condition, NULL);
+    pthread_cond_init(&sync.done_condition, NULL);
+    pthread_cond_init(&sync.cleanup_condition, NULL);
+
+    sync.ready_count = 0;
+    sync.done_count = 0;
+    sync.start = 0;
+    sync.cleanup_allowed = 0;
+    sync.abort = 0;
+
     pthread_t threads[CLIENT_COUNT];
     struct benchmark_context contexts[CLIENT_COUNT];
 
     struct timespec start;
     struct timespec end;
 
-    clock_gettime(CLOCK_MONOTONIC, &start);
-
     for (int i = 0; i < CLIENT_COUNT; i++) {
         contexts[i].client_id = i;
         contexts[i].failed = 0;
+        contexts[i].sync = &sync;
 
         if (pthread_create(
             &threads[i],
@@ -244,6 +332,37 @@ int main(void) {
             return EXIT_FAILURE;
         }
     }
+
+    pthread_mutex_lock(&sync.mutex);
+
+    while (sync.ready_count < CLIENT_COUNT && !sync.abort) {
+        pthread_cond_wait(&sync.ready_condition, &sync.mutex);
+    }
+
+    if (!sync.abort) {
+        clock_gettime(CLOCK_MONOTONIC, &start);
+
+        sync.start = 1;
+
+        pthread_cond_broadcast(&sync.start_condition);
+    }
+
+    pthread_mutex_unlock(&sync.mutex);
+
+    pthread_mutex_lock(&sync.mutex);
+
+    while (sync.done_count < CLIENT_COUNT && !sync.abort) {
+        pthread_cond_wait(&sync.done_condition, &sync.mutex);
+    }
+
+    if (!sync.abort) {
+        clock_gettime(CLOCK_MONOTONIC, &end);
+    }
+
+    sync.cleanup_allowed = 1;
+    pthread_cond_broadcast(&sync.cleanup_condition);
+
+    pthread_mutex_unlock(&sync.mutex);
 
     int any_failed = 0;
 
@@ -261,10 +380,14 @@ int main(void) {
     }
 
     if (any_failed) {
+        pthread_mutex_destroy(&sync.mutex);
+        pthread_cond_destroy(&sync.ready_condition);
+        pthread_cond_destroy(&sync.start_condition);
+        pthread_cond_destroy(&sync.done_condition);
+        pthread_cond_destroy(&sync.cleanup_condition);
+
         return EXIT_FAILURE;
     }
-
-    clock_gettime(CLOCK_MONOTONIC, &end);
 
     double seconds = elapsed_seconds(start, end);
 
@@ -278,6 +401,12 @@ int main(void) {
     printf("Total requests: %zu\n", total_requests);
     printf("Time: %.3f seconds\n", seconds);
     printf("Throughput: %.0f requests per second\n", requests_per_second);
+
+    pthread_mutex_destroy(&sync.mutex);
+    pthread_cond_destroy(&sync.ready_condition);
+    pthread_cond_destroy(&sync.start_condition);
+    pthread_cond_destroy(&sync.done_condition);
+    pthread_cond_destroy(&sync.cleanup_condition);
 
     return EXIT_SUCCESS;
 }
