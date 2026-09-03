@@ -232,7 +232,8 @@ static void handle_client(int client_fd, struct database *db) {
                 strlen(response)
             )) {
                 perror("write");
-                break;
+                command_destroy(command);
+                return;
             }
 
             command_destroy(command);
@@ -271,6 +272,17 @@ static void client_task(void *arg) {
 }
 
 int server_run(int port) {
+    struct sigaction sigpipe_action;
+    memset(&sigpipe_action, 0, sizeof(sigpipe_action));
+
+    sigpipe_action.sa_handler = SIG_IGN;
+    sigemptyset(&sigpipe_action.sa_mask);
+
+    if (sigaction(SIGPIPE, &sigpipe_action, NULL) == -1) {
+        perror("sigaction SIGPIPE");
+        return -1;
+    }
+
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
 
     if (server_fd == -1) {

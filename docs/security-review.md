@@ -6,7 +6,7 @@ A suspected problem is not classified as a confirmed finding until its behavior 
 
 ## SR-01: Client Disconnect During Response Write
 
-**Status:** Confirmed
+**Status:** Resolved
 
 **Attack surface:** Response writing and client disconnection
 
@@ -58,6 +58,32 @@ violates service availability and server-process integrity.
 
 ### Root Cause
 
-CacheCore writes responses with write(). When the peer has closed its
-connection, the write can generate SIGPIPE. CacheCore does not suppress
-or handle this signal, so its default disposition terminates the process.
+Before the fix, CacheCore wrote responses with `write()` without
+suppressing or handling `SIGPIPE`. When a peer had already closed its
+connection, a response write could generate `SIGPIPE`, whose default
+disposition terminated the process.
+
+### Fix
+
+CacheCore now configures the process-wide disposition of `SIGPIPE` as
+`SIG_IGN` using `sigaction()` before creating sockets or worker threads.
+
+When a response is written to a disconnected client, `write()` now
+returns an error instead of terminating the server process. The client
+handler reports the error, destroys the current parsed command, and
+returns. The worker then removes and closes only the failed client
+connection.
+
+### Regression Evidence
+
+After applying the fix, the adversarial client was run three times. In
+each trial, it sent 100 `PING` commands and reset its connection without
+reading the responses.
+
+CacheCore reported `write: Broken pipe` for each failed connection but
+remained running. A fresh client sent `PING` after every trial and
+received `PONG`.
+
+The server was then stopped normally with `SIGINT`. The result confirms
+that a response-write failure is contained to the responsible client
+connection and no longer compromises server availability.
