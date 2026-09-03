@@ -4,6 +4,8 @@ This document records security hypotheses, experiments, confirmed findings, fixe
 
 A suspected problem is not classified as a confirmed finding until its behavior is reproduced or otherwise established with sufficient evidence.
 
+---
+
 ## SR-01: Client Disconnect During Response Write
 
 **Status:** Resolved
@@ -87,3 +89,82 @@ received `PONG`.
 The server was then stopped normally with `SIGINT`. The result confirms
 that a response-write failure is contained to the responsible client
 connection and no longer compromises server availability.
+
+---
+
+## SR-02: Idle Connection Worker Exhaustion
+
+**Status:** Confirmed
+
+**Attack surface:** Network listener, connection lifecycle, and worker pool
+
+**Assets at risk:** Service availability
+
+### Hypothesis
+
+CacheCore assigns each accepted persistent connection to one worker, and
+the worker performs a blocking `read()` without an inactivity deadline.
+
+An unauthenticated client may therefore open a connection, send no
+command, and occupy a worker indefinitely. Four idle clients may occupy
+all four workers, preventing legitimate connections from being processed.
+
+The connection queue does not prevent this condition. It can retain
+additional client jobs, but queued jobs cannot execute until an occupied
+worker becomes available.
+
+### Expected Secure Behavior
+
+A bounded number of idle clients should not permanently consume all
+request-processing capacity. CacheCore should eventually reclaim
+connections that make no progress and continue serving active clients.
+
+### Test Plan
+
+1. Start CacheCore and confirm that a normal `PING` receives `PONG`.
+2. Open four client connections, matching the number of server workers.
+3. Keep all four connections open without sending commands.
+4. Open a fifth connection and send `PING`.
+5. Check whether the fifth client receives `PONG` within a short bounded
+   interval.
+6. Close the idle connections.
+7. Verify that CacheCore resumes processing normal requests.
+8. Record the server output and observed timing.
+
+### Evidence
+
+The issue was reproduced by opening four TCP connections, matching
+CacheCore's four-worker pool, and keeping all four connections open
+without sending commands.
+
+Before the idle connections were opened, a normal `PING` received
+`PONG`. While all four idle connections remained open, a fifth client
+connected and sent `PING` but received no response within the two-second
+test interval.
+
+After the four idle connections were closed, CacheCore resumed processing
+requests and a fresh `PING` received `PONG`.
+
+The server log showed that the fifth connection was accepted even though
+its command was not processed. This demonstrates that TCP acceptance and
+application-level service availability are separate events.
+
+### Impact
+
+Four unauthenticated remote clients can consume all request-processing
+workers without sending any commands. Legitimate requests then remain
+queued without making progress, allowing a small number of clients to
+deny service for an unbounded period.
+
+The bounded connection queue limits queued memory growth, but it does not
+preserve request-processing capacity or guarantee progress.
+
+### Root Cause
+
+CacheCore assigns one worker to each persistent client for the full
+lifetime of that connection. Each worker performs a blocking `read()`
+without an inactivity deadline.
+
+Because the worker pool contains four threads, four silent connections
+can block every worker indefinitely. Increasing the queue capacity would
+allow more connections to wait but would not make a worker available.
