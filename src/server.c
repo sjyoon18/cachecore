@@ -13,11 +13,13 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <errno.h>
+#include <sys/time.h>
 
 #define BUFFER_SIZE 1024
 #define THREAD_COUNT 4
 #define QUEUE_CAPACITY 16
 #define LISTEN_BACKLOG 64
+#define CLIENT_IDLE_TIMEOUT_SECONDS 10
 
 static volatile sig_atomic_t shutdown_requested = 0;
 
@@ -31,6 +33,26 @@ struct client_context {
     struct database *db;
     struct client_manager *manager;
 };
+
+static bool set_client_receive_timeout(int client_fd) {
+    struct timeval timeout = {
+        .tv_sec = CLIENT_IDLE_TIMEOUT_SECONDS,
+        .tv_usec = 0
+    };
+
+    if (setsockopt(
+        client_fd,
+        SOL_SOCKET,
+        SO_RCVTIMEO,
+        &timeout,
+        sizeof(timeout)
+    ) == -1) {
+        perror("setsockopt SO_RCVTIMEO");
+        return false;
+    }
+
+    return true;
+}
 
 static bool write_all(
     int fd,
@@ -161,6 +183,15 @@ static void handle_client(int client_fd, struct database *db) {
         ssize_t bytes_read = read(client_fd, read_buffer, sizeof(read_buffer));
 
         if (bytes_read == -1) {
+            if (errno == EINTR) {
+                continue;
+            }
+
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                printf("Client read timed out\n");
+                break;
+            }
+
             perror("read");
             break;
         }
@@ -361,6 +392,11 @@ int server_run(int port) {
 
             perror("accept");
             break;
+        }
+
+        if (!set_client_receive_timeout(client_fd)) {
+            close(client_fd);
+            continue;
         }
 
         if (client_manager_add(&manager, client_fd) != 0) {

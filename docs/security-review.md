@@ -94,7 +94,7 @@ connection and no longer compromises server availability.
 
 ## SR-02: Idle Connection Worker Exhaustion
 
-**Status:** Confirmed
+**Status:** Mitigated
 
 **Attack surface:** Network listener, connection lifecycle, and worker pool
 
@@ -168,3 +168,50 @@ without an inactivity deadline.
 Because the worker pool contains four threads, four silent connections
 can block every worker indefinitely. Increasing the queue capacity would
 allow more connections to wait but would not make a worker available.
+
+### Mitigation
+
+CacheCore now configures a ten-second receive timeout on every accepted
+client socket before adding it to the client manager or worker queue.
+
+If a blocking `read()` receives no data during that interval, it returns
+with `EAGAIN` or `EWOULDBLOCK`. The client handler identifies this as an
+inactivity timeout and returns, after which the worker removes and closes
+the client connection.
+
+A read interrupted by a signal with `EINTR` is retried rather than being
+misclassified as a client failure.
+
+### Regression Evidence
+
+Four silent connections were again opened to occupy all four workers. A
+fifth client connected and sent `PING`.
+
+The fifth client initially waited, but received `PONG` after the idle
+connections reached the server's configured timeout. The client-observed
+wait was 8.11 seconds because the timed request began after the idle
+workers had already spent part of their ten-second timeout interval.
+
+After the timeout, a fresh `PING` received `PONG` immediately.
+
+Normal persistent-client behavior was also tested. A connected client
+sent `PING`, remained inactive for approximately three seconds, sent
+another `PING`, and received `PONG` for both requests. It then sent
+`QUIT` and received `BYE`. This confirms that successful reads begin new
+inactivity intervals rather than imposing a maximum connection lifetime.
+
+### Residual Risk
+
+The mitigation bounds completely silent connections, but it does not
+remove the architectural coupling between one persistent connection and
+one worker.
+
+A client that sends data before each timeout expires receives another
+inactivity interval and may continue occupying its worker. Additionally,
+a socket waiting in the job queue has not yet begun a blocking `read()`,
+so its receive timeout does not expire while it is merely queued.
+
+Stronger protection would require broader architectural controls such as
+event-driven connection multiplexing, request deadlines, admission
+control, or fairness limits. Those changes are outside this targeted
+mitigation and should not be implied by the current result.
