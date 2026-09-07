@@ -6,5 +6,7 @@
 /test_database
 /stress_client
 /benchmark_client
+/reset_client
+/idle_clients
 
 .DS_Store

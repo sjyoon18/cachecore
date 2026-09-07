@@ -10,7 +10,7 @@ A request moves through the server as follows:
 2. The client manager records the socket so it can be interrupted during shutdown.
 3. The connection is submitted to a bounded queue with a capacity of 16.
 4. One of four worker threads removes it from the queue.
-5. That worker owns the persistent connection until the client disconnects or sends `QUIT`.
+5. That worker owns the persistent connection until the client disconnects, sends `QUIT`, encounters an I/O failure, or remains inactive for ten seconds.
 6. The connection handler extracts newline-terminated commands from the TCP byte stream.
 7. The parser converts each complete command into a structured representation.
 8. `PING` and `QUIT` are handled directly; `SET`, `GET`, and `DEL` go through the shared database.
@@ -51,7 +51,10 @@ CacheCore uses four fixed worker threads instead of creating one thread per conn
 
 The job queue has its own mutex and condition variable. Workers sleep while the queue is empty and wake when a connection is submitted. During destruction, the pool enters shutdown mode, drains queued work, and joins every worker.
 
-A worker owns an entire persistent connection, not a single command. This keeps connection state local to one thread and simplifies framing, but it also means an idle persistent client occupies a worker. Four such clients can occupy the full worker pool, leaving later connections queued until one disconnects.
+A worker owns an entire persistent connection, not a single command. This keeps connection state local to one thread and simplifies framing, but it couples connection lifetime to worker availability.
+
+A ten-second receive timeout bounds how long a completely silent client
+can occupy a worker. It does not provide complete fairness: a client that periodically sends data can continue retaining its worker, and a queued socket does not begin its receive timeout until a worker starts handling it. Eliminating that limitation would require broader controls such as event-driven connection multiplexing or explicit request and admission budgets.
 
 Three separate locks protect different kinds of shared state:
 
@@ -93,7 +96,7 @@ The architecture favors explicit ownership and understandable guarantees over ma
 
 Its main limitations are:
 
-- persistent clients can occupy all workers;
+- clients that continue sending data before the inactivity timeout can still occupy all workers;
 - all database operations share one mutex;
 - buffers and command sizes are fixed;
 - the server binds to all interfaces;
