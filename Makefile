@@ -20,6 +20,8 @@ TEST_COMMAND_BIN = test_command
 TEST_DATABASE_BIN = test_database
 STRESS_CLIENT_BIN = stress_client
 BENCHMARK_BIN = benchmark_client
+RESET_CLIENT_BIN = reset_client
+IDLE_CLIENTS_BIN = idle_clients
 
 $(TARGET): $(SOURCES) $(HEADERS)
 	$(CC) $(CFLAGS) $(SOURCES) -o $(TARGET)
@@ -63,6 +65,16 @@ $(BENCHMARK_BIN): bench/benchmark_client.c
 	bench/benchmark_client.c \
 	-o $(BENCHMARK_BIN)
 
+$(RESET_CLIENT_BIN): tests/security/reset_client.c
+	$(CC) $(CFLAGS) \
+	tests/security/reset_client.c \
+	-o $(RESET_CLIENT_BIN)
+
+$(IDLE_CLIENTS_BIN): tests/security/idle_clients.c
+	$(CC) $(CFLAGS) \
+	tests/security/idle_clients.c \
+	-o $(IDLE_CLIENTS_BIN)
+
 run-test-hashmap: $(TEST_HASHMAP_BIN)
 	./$(TEST_HASHMAP_BIN)
 
@@ -78,6 +90,8 @@ stress-client: $(STRESS_CLIENT_BIN)
 benchmark: $(BENCHMARK_BIN)
 	./$(BENCHMARK_BIN)
 
+security-clients: $(RESET_CLIENT_BIN) $(IDLE_CLIENTS_BIN)
+
 test: run-test-hashmap run-test-command run-test-database
 
 run: $(TARGET)
@@ -89,11 +103,14 @@ clean:
 	      $(TEST_COMMAND_BIN) \
 	      $(TEST_DATABASE_BIN) \
 		  $(STRESS_CLIENT_BIN) \
-		  $(BENCHMARK_BIN)
+		  $(BENCHMARK_BIN) \
+	      $(RESET_CLIENT_BIN) \
+	      $(IDLE_CLIENTS_BIN)
 
 .PHONY: run clean test \
         run-test-hashmap \
         run-test-command \
         run-test-database \
 		stress-client \
-		benchmark
+		benchmark \
+		security-clients

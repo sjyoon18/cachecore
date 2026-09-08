@@ -19,6 +19,8 @@ Each major feature was introduced in response to a limitation exposed by the pre
 - Startup replay, truncation of an incomplete trailing record, and automatic AOF compaction.
 - Coordinated `SIGINT` shutdown that closes active client sockets and joins workers.
 - Unit, integration, concurrent stress, and synchronized benchmark coverage.
+- Process-wide `SIGPIPE` suppression so failed response writes remain isolated to the responsible client.
+- A ten-second receive timeout that bounds worker occupation by completely silent clients.
 
 ## Design Evolution and Lessons
 
@@ -91,7 +93,9 @@ Compaction:  hashmap ---- snapshot ------> AOF
 ```
 
 - The listener accepts connections and rejects a new client if the queue is full.
-- A worker owns a persistent connection until that client disconnects or sends `QUIT`.
+- A worker owns a persistent connection until the client disconnects,
+  sends `QUIT`, encounters an I/O failure, or remains inactive for ten
+  seconds.
 - One database mutex serializes `SET`, `GET`, and `DEL` operations.
 - Successful mutations are persisted before the in-memory hashmap is changed.
 
@@ -171,6 +175,14 @@ make stress-client
 
 The stress client opens eight persistent connections. Each performs 1,000 validated `SET`/`GET` cycles. The final regression pass also verified the protocol over one persistent connection, persistence across restart, coordinated shutdown with an active client, and port reuse after shutdown.
 
+Build the manual adversarial clients with:
+
+```sh
+make security-clients
+```
+
+`reset_client` performs an abortive close while CacheCore is producing responses. `idle_clients` holds four silent connections to exercise worker-pool exhaustion. These clients are not part of `make test` because they require a running server and controlled coordination. See the [Security Review](docs/security-review.md) for the hypotheses, evidence, mitigations, and residual risks.
+
 ## Benchmark
 
 With the server running, execute:
@@ -195,7 +207,7 @@ These are local macOS measurements and are intended to show scaling within this 
 
 - CacheCore uses a custom protocol and is not Redis-compatible.
 - The server binds to all interfaces and provides no authentication, authorization, or encryption.
-- Persistent clients occupy workers for the lifetime of their connections, and a full queue causes new connections to be rejected.
+- Active persistent clients still occupy one worker each. The inactivity timeout bounds completely silent clients but does not prevent clients that periodically send data from retaining workers; queued connections do not begin timing out until assigned to a worker.
 - One database mutex serializes all data operations, favoring simple correctness over maximum parallelism.
 - AOF recovery repairs only an incomplete trailing record; a malformed complete record causes startup failure.
 - Compaction uses `fsync` and atomic rename for the AOF file but does not `fsync` the containing directory.
@@ -208,9 +220,17 @@ CacheCore is an educational systems project and should not be exposed as a produ
 - [Architecture](docs/architecture.md)
 - [Persistence and Recovery](docs/persistence-and-recovery.md)
 - [Testing and Benchmarking](docs/testing-and-benchmarking.md)
+- [Threat Model](docs/threat-model.md)
+- [Security Review](docs/security-review.md)
 
 ## Project Status
 
 The implementation is feature-complete for its intended learning scope. Repository hygiene and the final regression pass are complete, with no functional regressions found across automated tests, TCP behavior, concurrent stress, restart persistence, coordinated shutdown, and a benchmark smoke run.
+
+A subsequent threat-model-driven security review reproduced a
+process-terminating client-disconnect flaw and idle-connection worker
+exhaustion. I implemented targeted mitigations, reran adversarial and
+general regressions, and documented the remaining architectural limits
+instead of presenting the server as fully hardened.
 
 The most valuable result for me was learning to treat system behavior as a chain of explicit guarantees: frame the byte stream, bound concurrent work, define shared-state ownership, persist mutations in the correct order, recover only what the format can safely identify, and measure performance with controlled timing boundaries.
